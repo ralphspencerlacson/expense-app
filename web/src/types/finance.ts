@@ -11,22 +11,23 @@ export type IncomeDeduction = {
   group: 'contribution' | 'tax'
 }
 
+export type IncomePaymentSchedule = {
+  id: string
+  position: number
+  amount: number
+  grossAmount?: number
+  paymentDay: number
+  deductions?: IncomeDeduction[]
+}
+
 export type IncomeSource = {
+  history?: { until: string; value: IncomeSource }[]
   id: string
   name: string
   type: IncomeSourceType
   mode: 'recurring' | 'manual'
   schedule: IncomeSchedule
-  expectedAmount?: number
-  firstCutoffGrossAmount?: number
-  firstCutoffAmount?: number
-  firstCutoffDeductions?: IncomeDeduction[]
-  firstCutoffDay?: number
-  secondCutoffGrossAmount?: number
-  secondCutoffAmount?: number
-  secondCutoffDeductions?: IncomeDeduction[]
-  secondCutoffDay?: number
-  monthlyDay?: number
+  payments: IncomePaymentSchedule[]
   startMonth?: string
   endMonth?: string
   nextExpectedDate?: string
@@ -42,6 +43,8 @@ export type IncomeEntry = {
   kind: 'source' | 'one_time'
   category?: IncomeSourceType
   cutoff?: IncomeCutoff
+  account?: string
+  occurrenceKey?: string
   isGenerated?: boolean
   note?: string
 }
@@ -63,11 +66,14 @@ export type Expense = {
   tagId: string
   billId?: string
   cutoff?: IncomeCutoff
+  account?: string
+  occurrenceKey?: string
   isGenerated?: boolean
   note?: string
 }
 
 export type MonthlyBill = {
+  history?: { until: string; value: MonthlyBill }[]
   id: string
   name: string
   expectedAmount: number
@@ -88,8 +94,9 @@ export type SavingsSnapshot = {
   savings: number
 }
 
-export type NewIncomeSource = Omit<IncomeSource, 'id' | 'isActive'> & {
+export type NewIncomeSource = Omit<IncomeSource, 'id' | 'isActive' | 'payments'> & {
   isActive?: boolean
+  payments?: Array<Omit<IncomePaymentSchedule, 'id'>>
 }
 
 export type NewIncomeEntry = Omit<IncomeEntry, 'id'>

@@ -1,4 +1,5 @@
-import { ArrowDownRight, ArrowUpRight, CalendarClock, Sparkles, Wallet } from 'lucide-react'
+import { getMonthlyCashflow } from '../lib/reporting'
+import { ArrowDownRight, ArrowUpRight, CalendarClock, CirclePlus, ReceiptText, Sparkles, Wallet } from 'lucide-react'
 import { Link } from 'react-router'
 import { CashflowBarChart } from '../components/charts/cashflow-bar-chart'
 import { ExpenseDonutChart } from '../components/charts/expense-donut-chart'
@@ -6,63 +7,73 @@ import { SavingsLineChart } from '../components/charts/savings-line-chart'
 import { EmptyState } from '../components/empty-state'
 import { Badge } from '../components/ui/badge'
 import { Card } from '../components/ui/card'
-import { getExpensesForMonth, getIncomeEntriesForMonth, isMonthInRange } from '../lib/recurring'
+import { getExpensesForMonth, getIncomeEntriesForMonth } from '../lib/recurring'
 import { cn, formatCurrency, formatDate, formatMonthLabel } from '../lib/utils'
 import { useFinanceStore } from '../store/finance-store'
-import type { IncomeSource } from '../types/finance'
 
 export function OverviewPage() {
-  const { incomeEntries, incomeSources, expenses, expenseTags, monthlyBills, savingsSnapshots } = useFinanceStore()
+  const skippedKeys = useFinanceStore(state => state.skippedOccurrenceKeys)
+  const { incomeEntries, incomeSources, expenses, expenseTags, monthlyBills } = useFinanceStore()
+  const savingsSnapshots = getMonthlyCashflow(incomeEntries, expenses)
   const activeMonth = useFinanceStore((state) => state.selectedMonth)
-  const monthIncomeEntries = getIncomeEntriesForMonth(incomeSources, incomeEntries, activeMonth)
-  const monthExpenses = getExpensesForMonth(monthlyBills, expenses, activeMonth)
-  const totalIncome = monthIncomeEntries.reduce((sum, entry) => sum + entry.amount, 0)
-  const totalExpenses = monthExpenses.reduce((sum, expense) => sum + expense.amount, 0)
+  const monthIncomeEntries = getIncomeEntriesForMonth(incomeSources, incomeEntries, activeMonth, skippedKeys)
+  const monthExpenses = getExpensesForMonth(monthlyBills, expenses, activeMonth, skippedKeys)
+  const receivedIncomeEntries = monthIncomeEntries.filter((entry) => !entry.isGenerated)
+  const expectedIncomeEntries = monthIncomeEntries.filter((entry) => entry.isGenerated)
+  const paidExpenses = monthExpenses.filter((expense) => !expense.isGenerated)
+  const dueExpenses = monthExpenses.filter((expense) => expense.isGenerated)
+  const totalIncome = receivedIncomeEntries.reduce((sum, entry) => sum + entry.amount, 0)
+  const expectedIncome = expectedIncomeEntries.reduce((sum, entry) => sum + entry.amount, 0)
+  const totalExpenses = paidExpenses.reduce((sum, expense) => sum + expense.amount, 0)
+  const expectedExpenses = dueExpenses.reduce((sum, expense) => sum + expense.amount, 0)
   const remaining = totalIncome - totalExpenses
+  const forecastRemaining = totalIncome + expectedIncome - totalExpenses - expectedExpenses
   const currentMonthSavings = savingsSnapshots.find((snapshot) => snapshot.month === activeMonth)?.savings ?? remaining
-  const recentIncome = [...monthIncomeEntries].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
-  const recentExpenses = [...monthExpenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
-  const upcomingSources = incomeSources.filter((source) => source.isActive && source.nextExpectedDate).slice(0, 3)
-  const firstCutoffIncome = monthIncomeEntries.filter((entry) => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
+  const recentIncome = [...receivedIncomeEntries].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
+  const recentExpenses = [...paidExpenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
+  const upcomingIncome = [...expectedIncomeEntries].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3)
+  const firstCutoffIncome = receivedIncomeEntries.filter((entry) => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
   const secondCutoffIncome = monthIncomeEntries.filter((entry) => entry.cutoff === 'second').reduce((sum, entry) => sum + entry.amount, 0)
-  const firstCutoffExpenses = monthExpenses.filter((expense) => expense.cutoff === 'first').reduce((sum, expense) => sum + expense.amount, 0)
+  const firstCutoffExpenses = paidExpenses.filter((expense) => expense.cutoff === 'first').reduce((sum, expense) => sum + expense.amount, 0)
   const secondCutoffExpenses = monthExpenses.filter((expense) => expense.cutoff === 'second').reduce((sum, expense) => sum + expense.amount, 0)
+  const plannedFirstIncome = monthIncomeEntries.filter(entry => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
+  const plannedSecondIncome = monthIncomeEntries.filter(entry => entry.cutoff === 'second').reduce((sum, entry) => sum + entry.amount, 0)
+  const plannedFirstExpenses = monthExpenses.filter(entry => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
+  const plannedSecondExpenses = monthExpenses.filter(entry => entry.cutoff === 'second').reduce((sum, entry) => sum + entry.amount, 0)
   const topTag = expenseTags
     .map((tag) => ({
       tag,
-      total: monthExpenses.filter((expense) => expense.tagId === tag.id).reduce((sum, expense) => sum + expense.amount, 0),
+      total: paidExpenses.filter((expense) => expense.tagId === tag.id).reduce((sum, expense) => sum + expense.amount, 0),
     }))
     .filter((item) => item.total > 0)
     .sort((a, b) => b.total - a.total)[0]
-  const activeBills = monthlyBills.filter((bill) => bill.isActive && isMonthInRange(activeMonth, bill.startMonth, bill.endMonth))
-  const monthlyBillTotal = activeBills.reduce((sum, bill) => sum + bill.expectedAmount, 0)
   const spendingRate = totalIncome > 0 ? Math.min((totalExpenses / totalIncome) * 100, 100) : 0
   const expenseChartItems = expenseTags
     .map((tag) => ({
       label: tag.name,
-      value: monthExpenses.filter((expense) => expense.tagId === tag.id).reduce((sum, expense) => sum + expense.amount, 0),
+      value: paidExpenses.filter((expense) => expense.tagId === tag.id).reduce((sum, expense) => sum + expense.amount, 0),
       color: getChartColor(tag.id),
     }))
     .filter((item) => item.value > 0)
 
   return (
-    <div className="page-shell space-y-4 sm:space-y-6">
+    <div key={activeMonth} className="month-change page-shell space-y-4 sm:space-y-6">
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <div className="relative overflow-hidden rounded-[1.5rem] bg-zinc-950 p-5 text-white shadow-2xl shadow-zinc-950/20 sm:rounded-[2rem] sm:p-6">
+        <div className="hero-motion relative overflow-hidden rounded-[1.5rem] bg-zinc-950 p-5 text-white shadow-2xl shadow-zinc-950/20 sm:rounded-[2rem] sm:p-6">
           <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full bg-emerald-400/25 blur-3xl" />
           <div className="absolute -bottom-20 left-24 h-52 w-52 rounded-full bg-sky-400/20 blur-3xl" />
           <div className="relative">
             <Badge className="bg-white/10 text-white ring-white/15">{formatMonthLabel(activeMonth)}</Badge>
-            <h1 className="display-title mt-5 max-w-2xl font-semibold">Your month, at a glance.</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-300">Recurring income and bills are included automatically. Add everyday activity as it happens.</p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <Link className="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-zinc-950 transition hover:bg-zinc-100 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30" to="/income">Add income</Link>
-              <Link className="rounded-xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30" to="/expenses">Add expense</Link>
+            <h1 className="page-title mt-3 max-w-2xl font-semibold">Your month, at a glance.</h1>
+            <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-300">Actual cashflow is separated from expected income and bills, so you always know what has really happened.</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link className="interactive-lift inline-flex min-h-11 items-center gap-2 rounded-2xl bg-white px-4 py-2 text-sm font-semibold text-zinc-950 shadow-xl shadow-black/20 transition hover:bg-emerald-50 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30" to="/income"><CirclePlus className="h-4 w-4" />Add income</Link>
+              <Link className="interactive-lift inline-flex min-h-11 items-center gap-2 rounded-2xl border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white shadow-lg backdrop-blur transition hover:bg-white/20 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-white/30" to="/expenses"><ReceiptText className="h-4 w-4" />Add expense</Link>
             </div>
-            <div className="mt-8 grid gap-3 sm:grid-cols-3">
-              <HeroMetric label="Available" value={formatCurrency(remaining)} />
-              <HeroMetric label="Bills planned" value={formatCurrency(monthlyBillTotal)} />
-              <HeroMetric label="Monthly savings" value={formatCurrency(currentMonthSavings)} />
+            <div className="mt-4 grid gap-3 sm:grid-cols-3">
+              <HeroMetric label="Monthly net cashflow" value={formatCurrency(remaining)} />
+              <HeroMetric label="Still due" value={formatCurrency(expectedExpenses)} />
+              <HeroMetric label="Projected net cashflow" value={formatCurrency(forecastRemaining)} />
             </div>
           </div>
         </div>
@@ -90,9 +101,9 @@ export function OverviewPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 min-[430px]:grid-cols-2 sm:gap-4 xl:grid-cols-4">
-        <SummaryCard icon={ArrowUpRight} label="Total income" value={formatCurrency(totalIncome)} tone="emerald" />
-        <SummaryCard icon={ArrowDownRight} label="Total expenses" value={formatCurrency(totalExpenses)} tone="red" />
-        <SummaryCard icon={Wallet} label="Remaining" value={formatCurrency(remaining)} tone="zinc" />
+        <SummaryCard icon={ArrowUpRight} label="Income received" value={formatCurrency(totalIncome)} detail={`${formatCurrency(expectedIncome)} expected`} tone="emerald" />
+        <SummaryCard icon={ArrowDownRight} label="Expenses paid" value={formatCurrency(totalExpenses)} detail={`${formatCurrency(expectedExpenses)} due`} tone="red" />
+        <SummaryCard icon={Wallet} label="Monthly net cashflow" value={formatCurrency(remaining)} tone="zinc" />
         <SummaryCard icon={CalendarClock} label="Top expense tag" value={topTag?.tag.name ?? 'None'} detail={topTag ? formatCurrency(topTag.total) : undefined} tone="sky" />
       </div>
 
@@ -100,8 +111,8 @@ export function OverviewPage() {
         <Card>
           <div className="mb-6 flex items-start justify-between gap-4">
             <div>
-              <h2 className="font-semibold">Savings trend</h2>
-              <p className="mt-1 text-sm text-zinc-500">Monthly savings based on income minus expenses.</p>
+              <h2 className="font-semibold">Monthly net cashflow</h2>
+              <p className="mt-1 text-sm text-zinc-500">Income received minus expenses paid, calculated from your records.</p>
             </div>
             <Badge className="bg-emerald-100 text-emerald-700">Latest {formatCurrency(currentMonthSavings)}</Badge>
           </div>
@@ -109,21 +120,21 @@ export function OverviewPage() {
             <SavingsLineChart snapshots={savingsSnapshots} />
           ) : (
             <EmptyState
-              title="No savings history yet"
-              description="Monthly savings snapshots will appear here after you start tracking monthly income and expenses."
+              title="No transaction history yet"
+              description="Record income or expenses to build your monthly cashflow history."
             />
           )}
         </Card>
 
         <Card>
           <div className="mb-6">
-            <h2 className="font-semibold">Cutoff cashflow</h2>
-            <p className="mt-1 text-sm text-zinc-500">Your 1st cutoff carries bills/support, while 2nd cutoff carries lot amortization.</p>
+            <h2 className="font-semibold">Payment cashflow</h2>
+            <p className="mt-1 text-sm text-zinc-500">Compare confirmed income and spending across both pay periods.</p>
           </div>
           <CashflowBarChart
             items={[
-              { label: '1st cutoff', income: firstCutoffIncome, expenses: firstCutoffExpenses },
-              { label: '2nd cutoff', income: secondCutoffIncome, expenses: secondCutoffExpenses },
+              { label: '1st payment', income: firstCutoffIncome, expenses: firstCutoffExpenses },
+              { label: '2nd payment', income: secondCutoffIncome, expenses: secondCutoffExpenses },
             ]}
           />
         </Card>
@@ -151,56 +162,56 @@ export function OverviewPage() {
               <h2 className="font-semibold">Your monthly setup</h2>
               <p className="mt-1 text-sm text-zinc-500">Expected cash flow for {formatMonthLabel(activeMonth)}.</p>
             </div>
-            <Badge className="bg-zinc-950 text-white">Net {formatCurrency(remaining)}</Badge>
+            <Badge className="bg-zinc-950 text-white">Projected {formatCurrency(forecastRemaining)}</Badge>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <SetupCard label="Salary 1st cutoff" value={formatCurrency(firstCutoffIncome)} tone="income" />
-            <SetupCard label="Salary 2nd cutoff" value={formatCurrency(secondCutoffIncome)} tone="income" />
-            <SetupCard label="1st cutoff obligations" value={formatCurrency(firstCutoffExpenses)} tone="expense" />
-            <SetupCard label="2nd cutoff obligations" value={formatCurrency(secondCutoffExpenses)} tone="expense" />
+            <SetupCard label="1st payment income" value={formatCurrency(plannedFirstIncome)} tone="income" />
+            <SetupCard label="2nd payment income" value={formatCurrency(plannedSecondIncome)} tone="income" />
+            <SetupCard label="1st pay-period spending" value={formatCurrency(plannedFirstExpenses)} tone="expense" />
+            <SetupCard label="2nd pay-period spending" value={formatCurrency(plannedSecondExpenses)} tone="expense" />
           </div>
         </Card>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-4">
         <Card className="lg:col-span-1">
-          <h2 className="font-semibold">Upcoming expected income</h2>
+          <h2 className="font-semibold">Expected income</h2>
           <div className="mt-4 space-y-3">
-            {upcomingSources.length ? upcomingSources.map((source) => (
-              <div key={source.id} className="flex items-center justify-between gap-3 rounded-2xl border border-zinc-100 bg-white/70 p-3 transition hover:border-emerald-200 hover:bg-emerald-50/60">
+            {upcomingIncome.length ? upcomingIncome.map((entry) => (
+              <div key={entry.id} className="flex items-center justify-between gap-3 rounded-2xl border border-amber-100 bg-amber-50/60 p-3">
                 <div>
-                  <p className="text-sm font-medium">{source.name}</p>
-                  <p className="text-xs text-zinc-500">{source.nextExpectedDate ? formatDate(source.nextExpectedDate) : 'No date'}</p>
+                  <p className="text-sm font-medium">{entry.title}</p>
+                  <p className="text-xs text-zinc-500">Expected {formatDate(entry.date)}</p>
                 </div>
-                <p className="text-sm font-semibold">{getExpectedIncomeLabel(source)}</p>
+                <p className="text-sm font-semibold">{formatCurrency(entry.amount)}</p>
               </div>
             )) : (
               <EmptyState
                 title="No income sources"
-                description="Setup a salary or monthly income source to see upcoming income here."
+                  description="All expected income for this month has been received, or no recurring source is configured."
               />
             )}
           </div>
         </Card>
 
         <Card>
-          <h2 className="font-semibold">Monthly bills</h2>
+            <h2 className="font-semibold">Bills still due</h2>
           <div className="mt-4 space-y-3">
-            {activeBills.length ? activeBills
-              .sort((a, b) => a.dueDay - b.dueDay)
+            {dueExpenses.length ? dueExpenses
+              .sort((a, b) => a.date.localeCompare(b.date))
               .slice(0, 4)
-              .map((bill) => (
-                <div key={bill.id} className="flex items-center justify-between gap-3 rounded-2xl p-2 transition hover:bg-red-50/70">
+              .map((expense) => (
+                <div key={expense.id} className="flex items-center justify-between gap-3 rounded-2xl p-2 transition hover:bg-red-50/70">
                   <div>
-                    <p className="text-sm font-medium">{bill.name}</p>
-                    <p className="text-xs text-zinc-500">Due day {bill.dueDay}</p>
+                    <p className="text-sm font-medium">{expense.title}</p>
+                    <p className="text-xs text-zinc-500">Due {formatDate(expense.date)}</p>
                   </div>
-                  <Badge className="bg-red-100 text-red-700">{formatCurrency(bill.expectedAmount)}</Badge>
+                  <Badge className="bg-red-100 text-red-700">{formatCurrency(expense.amount)}</Badge>
                 </div>
               )) : (
                 <EmptyState
                   title="No monthly bills"
-                  description="Add recurring bills to track planned expenses automatically."
+                  description="All recurring bills are paid, or no bills are configured."
                 />
               )}
           </div>
@@ -220,7 +231,7 @@ export function OverviewPage() {
             )) : (
               <EmptyState
                 title="No recent income"
-                description="Recurring income and one-time income will appear here."
+                description="Confirmed and manually added income will appear here."
               />
             )}
           </div>
@@ -243,7 +254,7 @@ export function OverviewPage() {
             }) : (
               <EmptyState
                 title="No recent expenses"
-                description="Monthly bills and one-off expenses will appear here."
+                description="Paid bills and one-off expenses will appear here."
               />
             )}
           </div>
@@ -284,14 +295,6 @@ function HeroMetric({ label, value }: { label: string; value: string }) {
       <p className="mt-2 text-xl font-semibold tracking-tight">{value}</p>
     </div>
   )
-}
-
-function getExpectedIncomeLabel(source: IncomeSource) {
-  if (source.schedule === 'cutoff') {
-    return `${formatCurrency(source.firstCutoffAmount ?? 0)} / ${formatCurrency(source.secondCutoffAmount ?? 0)}`
-  }
-
-  return formatCurrency(source.expectedAmount ?? 0)
 }
 
 function SummaryCard({

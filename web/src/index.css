@@ -95,6 +95,87 @@ select {
   }
 }
 
+@keyframes ambient-shift {
+  0%,
+  100% {
+    transform: translate3d(-8%, -5%, 0) rotate(0deg);
+  }
+
+  50% {
+    transform: translate3d(8%, 6%, 0) rotate(12deg);
+  }
+}
+
+@keyframes button-sheen {
+  from {
+    transform: translateX(-180%) skewX(-24deg);
+  }
+
+  to {
+    transform: translateX(420%) skewX(-24deg);
+  }
+}
+
+@keyframes status-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgb(245 158 11 / 0);
+  }
+
+  50% {
+    box-shadow: 0 0 0 5px rgb(245 158 11 / 0.08);
+  }
+}
+
+@keyframes drawer-enter {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes backdrop-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes month-change {
+  from {
+    opacity: 0;
+    transform: translateX(18px);
+    filter: blur(3px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes today-enter {
+  from {
+    opacity: 0;
+    width: 0;
+    transform: translateX(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .animate-float-slow {
   animation: float-slow 11s ease-in-out infinite;
 }
@@ -129,6 +210,77 @@ select {
 
 .mobile-nav-enter {
   animation: nav-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.hero-motion::after {
+  position: absolute;
+  inset: -70%;
+  pointer-events: none;
+  content: "";
+  background: conic-gradient(from 90deg, transparent 0 35%, rgb(255 255 255 / 0.08) 45%, transparent 55% 100%);
+  animation: ambient-shift 12s ease-in-out infinite;
+}
+
+.hero-motion > * {
+  z-index: 1;
+}
+
+.action-button::after {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 24%;
+  pointer-events: none;
+  content: "";
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.2), transparent);
+  transform: translateX(-180%) skewX(-24deg);
+}
+
+.action-button:hover::after {
+  animation: button-sheen 700ms ease-out;
+}
+
+.status-awaiting {
+  animation: status-breathe 3.2s ease-in-out infinite;
+}
+
+.drawer-enter {
+  animation: drawer-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.drawer-backdrop {
+  animation: backdrop-enter 220ms ease-out both;
+}
+
+@media (min-width: 640px) {
+  @keyframes drawer-enter {
+    from {
+      opacity: 0;
+      transform: translateX(110%);
+    }
+
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+}
+
+.month-change {
+  animation: month-change 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.today-enter {
+  animation: today-enter 320ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.nav-item:hover .nav-icon {
+  transform: rotate(-5deg) scale(1.08);
+}
+
+.nav-item[aria-current="page"] .nav-icon {
+  transform: scale(1.08);
+  box-shadow: 0 8px 20px -10px rgb(255 255 255 / 0.8);
 }
 
 .display-title {
@@ -181,7 +333,11 @@ select {
 
 @media (hover: hover) and (pointer: fine) {
   .interactive-lift:hover {
-    transform: translateY(-2px);
+    transform: translateY(-3px);
+  }
+
+  .interactive-lift:active {
+    transform: translateY(0) scale(0.985);
   }
 }
 

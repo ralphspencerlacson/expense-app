@@ -5,14 +5,15 @@ import { formatCurrency, formatMonthLabel } from '../lib/utils'
 import { useFinanceStore } from '../store/finance-store'
 
 export function TagsPage() {
+  const skippedKeys = useFinanceStore(state => state.skippedOccurrenceKeys)
   const { expenseTags, expenses, monthlyBills, selectedMonth } = useFinanceStore()
-  const monthExpenses = getExpensesForMonth(monthlyBills, expenses, selectedMonth)
+  const monthExpenses = getExpensesForMonth(monthlyBills, expenses, selectedMonth, skippedKeys).filter(expense => !expense.isGenerated)
 
   return (
     <div className="page-shell space-y-4 sm:space-y-6">
       <div>
         <h1 className="page-title font-semibold">Tags</h1>
-        <p className="mt-1 text-sm text-zinc-500">Spending by category for {formatMonthLabel(selectedMonth)}, including recurring bills.</p>
+        <p className="mt-1 text-sm text-zinc-500">Spending by category for {formatMonthLabel(selectedMonth)}, based on paid expenses.</p>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

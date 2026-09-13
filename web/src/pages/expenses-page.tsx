@@ -1,4 +1,7 @@
+import { PaymentConfirmation, UndoPaymentConfirmation } from '../components/payment-confirmation'
 import { useState, type FormEvent } from 'react'
+import { CalendarDays, Check, CirclePlus, Grid2X2, LayoutList, Pause, Pencil, Play, Trash2, X } from 'lucide-react'
+import { EditDrawer } from '../components/edit-drawer'
 import { EmptyState } from '../components/empty-state'
 import { Badge } from '../components/ui/badge'
 import { Button } from '../components/ui/button'
@@ -6,16 +9,23 @@ import { Card } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { Select } from '../components/ui/select'
 import { getExpensesForMonth } from '../lib/recurring'
-import { cn, defaultDateForMonth, formatCurrency, formatDate, formatMonthLabel } from '../lib/utils'
+import { cn, defaultDateForMonth, formatCurrency, formatDate, formatLocalDate, formatMonthLabel } from '../lib/utils'
 import { useFinanceStore } from '../store/finance-store'
 
 type ViewMode = 'list' | 'grid' | 'calendar'
-type ExpenseAction = 'record_bill' | 'one_off' | 'setup_bill'
+type ExpenseAction = 'one_off' | 'setup_bill'
 
 const dueDateDays = Array.from({ length: 31 }, (_, index) => String(index + 1))
+const viewModes = [
+  { value: 'list', label: 'List', icon: LayoutList },
+  { value: 'grid', label: 'Cards', icon: Grid2X2 },
+  { value: 'calendar', label: 'Calendar', icon: CalendarDays },
+] satisfies { value: ViewMode; label: string; icon: typeof LayoutList }[]
 
 export function ExpensesPage() {
+  const skippedKeys = useFinanceStore(state => state.skippedOccurrenceKeys)
   const { expenses, expenseTags, monthlyBills, addExpense, deleteExpense, addMonthlyBill, updateMonthlyBill, deleteMonthlyBill, selectedMonth } = useFinanceStore()
+  const isSaving = useFinanceStore(state => state.isSaving)
   const activeMonth = selectedMonth
   const [title, setTitle] = useState('')
   const [amount, setAmount] = useState('')
@@ -32,16 +42,18 @@ export function ExpensesPage() {
   const [editBillDueDay, setEditBillDueDay] = useState('')
   const [editBillEndMonth, setEditBillEndMonth] = useState('')
   const [expenseAction, setExpenseAction] = useState<ExpenseAction>('one_off')
+  const [account, setAccount] = useState('')
+  const [note, setNote] = useState('')
   const [formMessage, setFormMessage] = useState('')
   const [search, setSearch] = useState('')
   const [filterTag, setFilterTag] = useState('all')
   const [viewMode, setViewMode] = useState<ViewMode>('list')
-  const activeExpenseDate = date.startsWith(activeMonth) ? date : defaultDateForMonth(activeMonth)
+  const activeExpenseDate = date
 
-  const monthExpenses = getExpensesForMonth(monthlyBills, expenses, activeMonth)
-  const fixedExpenseTotal = monthExpenses.filter((expense) => expense.billId || expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
-  const oneOffExpenseTotal = monthExpenses.filter((expense) => !expense.billId && !expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
-  const monthExpenseTotal = fixedExpenseTotal + oneOffExpenseTotal
+  const monthExpenses = getExpensesForMonth(monthlyBills, expenses, activeMonth, skippedKeys)
+  const paidExpenseTotal = monthExpenses.filter((expense) => !expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
+  const dueExpenseTotal = monthExpenses.filter((expense) => expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
+  const forecastExpenseTotal = paidExpenseTotal + dueExpenseTotal
   const filteredExpenses = monthExpenses
     .filter((expense) => expense.title.toLowerCase().includes(search.toLowerCase()))
     .filter((expense) => filterTag === 'all' || expense.tagId === filterTag)
@@ -51,7 +63,7 @@ export function ExpensesPage() {
     if (window.confirm(`Delete ${expense?.title ?? 'this expense'}?`)) deleteExpense(id)
   }
 
-  const submitExpense = (event: FormEvent<HTMLFormElement>) => {
+  const submitExpense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const numericAmount = Number(amount)
     if (!title.trim()) return setFormMessage('Enter an expense description.')
@@ -59,13 +71,14 @@ export function ExpensesPage() {
     if (!activeExpenseDate) return setFormMessage('Choose the date of the expense.')
     if (!tagId) return setFormMessage('Choose a category.')
 
-    addExpense({ title: title.trim(), amount: numericAmount, date: activeExpenseDate, tagId })
+    if (!await addExpense({ title: title.trim(), amount: numericAmount, date: activeExpenseDate, tagId, account: account.trim() || undefined, note: note.trim() || undefined })) return
     setTitle('')
+    setNote('')
     setAmount('')
     setFormMessage('Expense added.')
   }
 
-  const submitMonthlyBill = (event: FormEvent<HTMLFormElement>) => {
+  const submitMonthlyBill = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const dueDay = Number(billDueDay)
 
@@ -75,19 +88,19 @@ export function ExpensesPage() {
     if (dueDay < 1 || dueDay > 31) return setFormMessage('Choose a valid due day.')
     if (billEndMonth && billEndMonth < activeMonth) return setFormMessage('The end month cannot be before the start month.')
 
-    addMonthlyBill({
+    if (!await addMonthlyBill({
       name: billName.trim(),
       expectedAmount: numericAmount,
       dueDay,
       tagId: billTagId,
       startMonth: activeMonth,
       endMonth: billEndMonth || undefined,
-    })
+    })) return
     setBillName('')
     setBillAmount('')
     setBillDueDay('1')
     setBillEndMonth('')
-    setFormMessage('Recurring bill added.')
+    setFormMessage('Recurring expense added.')
   }
 
   const startEditBill = (bill: (typeof monthlyBills)[number]) => {
@@ -98,76 +111,107 @@ export function ExpensesPage() {
     setEditBillEndMonth(bill.endMonth ?? '')
   }
 
-  const saveBillEdit = () => {
+  const saveBillEdit = async () => {
     const dueDay = Number(editBillDueDay)
 
     if (!editingBillId || !editBillName.trim() || Number(editBillAmount) <= 0 || dueDay < 1 || dueDay > 31) return
 
-    updateMonthlyBill(editingBillId, {
+    if (!await updateMonthlyBill(editingBillId, {
       name: editBillName,
       expectedAmount: Number(editBillAmount),
       dueDay,
       endMonth: editBillEndMonth || undefined,
-    })
+    })) return
     setEditingBillId(null)
   }
 
   return (
-    <div className="page-shell space-y-4 sm:space-y-6">
-      <div className="relative overflow-hidden rounded-[1.5rem] border border-white/70 bg-zinc-950 p-5 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.9)] sm:rounded-[2.25rem] sm:p-6 lg:p-8">
+    <div key={activeMonth} className="month-change page-shell space-y-4 sm:space-y-6">
+      <div className="hero-motion relative overflow-hidden rounded-[1.5rem] border border-white/70 bg-zinc-950 p-5 text-white shadow-[0_32px_90px_-45px_rgba(15,23,42,0.9)] sm:rounded-[2.25rem] sm:p-6 lg:p-8">
         <div className="pointer-events-none absolute -right-16 -top-16 h-56 w-56 rounded-full bg-red-400/25 blur-3xl" />
         <div className="pointer-events-none absolute right-32 top-20 h-32 w-32 rounded-full bg-amber-300/20 blur-2xl" />
-        <div className="relative grid gap-6 xl:grid-cols-[1fr_auto] xl:items-end">
+        <div className="relative grid w-full gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
           <div>
             <Badge className="bg-white/10 text-white ring-white/15">Expense control</Badge>
-            <h1 className="display-title mt-4 max-w-3xl font-semibold">Manage spending with a cleaner monthly command center.</h1>
-            <p className="mt-4 max-w-2xl text-sm leading-6 text-zinc-300">Track everyday spending and recurring bills for {formatMonthLabel(activeMonth)}.</p>
+            <h1 className="page-title mt-2 max-w-3xl font-semibold">Expense cashflow</h1>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-300">Paid expenses and upcoming obligations stay clearly separated for {formatMonthLabel(activeMonth)}.</p>
           </div>
-          <div className="grid gap-3 min-[430px]:grid-cols-3 xl:w-[30rem]">
-            <MetricCard label="Month total" value={formatCurrency(monthExpenseTotal)} tone="light" />
-            <MetricCard label="Fixed bills" value={formatCurrency(fixedExpenseTotal)} tone="red" />
-            <MetricCard label="One-off" value={formatCurrency(oneOffExpenseTotal)} tone="amber" />
+          <div className="grid gap-3 min-[430px]:grid-cols-3 lg:w-[28rem]">
+            <MetricCard label="Paid" value={formatCurrency(paidExpenseTotal)} tone="light" />
+            <MetricCard label="Due" value={formatCurrency(dueExpenseTotal)} tone="red" />
+            <MetricCard label="Forecast" value={formatCurrency(forecastExpenseTotal)} tone="amber" />
           </div>
         </div>
       </div>
 
       <Card>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">What are you adding?</h2>
-            <p className="mt-1 text-sm text-zinc-500">Choose the action and the form below adapts smoothly.</p>
-          </div>
-          <Badge className="bg-zinc-100 text-zinc-700">{formatMonthLabel(activeMonth)}</Badge>
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <ActionChoice
-            active={expenseAction === 'record_bill'}
-            description="Review, edit, pause, or remove recurring costs."
-            label="Manage recurring bills"
-            meta="Monthly setup"
-            onClick={() => setExpenseAction('record_bill')}
-          />
-          <ActionChoice
-            active={expenseAction === 'one_off'}
-            description="Food, transport, leisure, unexpected spending."
-            label="Add one-off expense"
-            meta="Manual entry"
-            onClick={() => setExpenseAction('one_off')}
-          />
-          <ActionChoice
-            active={expenseAction === 'setup_bill'}
-            description="Only needed for a new recurring bill."
-            label="Set up recurring bill"
-            meta="Recurring setup"
-            onClick={() => setExpenseAction('setup_bill')}
-          />
-        </div>
+        <h2 className="text-lg font-semibold tracking-tight">Add expense</h2>
+        <p className="mt-1 text-sm text-zinc-500">Record a payment or set up an expense that repeats each month.</p>
+        <label className="mt-4 grid gap-2 text-sm font-semibold">Expense type
+          <Select value={expenseAction} onChange={(event) => { setExpenseAction(event.target.value as ExpenseAction); setFormMessage('') }}>
+            <option value="one_off">One-time expense</option>
+            <option value="setup_bill">Recurring expense</option>
+          </Select>
+        </label>
       </Card>
 
-      {expenseAction === 'record_bill' ? (
-        <Card className="animate-soft-scale">
-          <h2 className="text-lg font-semibold tracking-tight">Recurring bills</h2>
-          <p className="mt-1 text-sm text-zinc-500">Active bills are included automatically until their end month.</p>
+      <div className="grid gap-4 lg:grid-cols-2">
+        {expenseAction === 'one_off' ? (
+          <Card className="relative animate-soft-scale overflow-hidden lg:col-span-2">
+          <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-red-200/60 blur-3xl" />
+          <div className="relative">
+            <h2 className="text-lg font-semibold tracking-tight">One-time expense</h2>
+            <p className="mt-1 text-sm text-zinc-500">Record spending when money leaves your account.</p>
+            <form className="mt-4 grid gap-3" onSubmit={submitExpense}>
+            <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2 text-sm font-semibold">Account (optional)<Input value={account} onChange={event => setAccount(event.target.value)} placeholder="Cash, bank, or card" /></label><label className="grid gap-2 text-sm font-semibold">Notes (optional)<Input value={note} onChange={event => setNote(event.target.value)} /></label></div>
+            <label className="text-sm font-semibold" htmlFor="expense-title">Description</label>
+            <Input id="expense-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Lunch, fuel, medicine" required />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Input aria-label="Expense amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount" required />
+              <Input aria-label="Expense date" type="date" value={activeExpenseDate} onChange={(event) => setDate(event.target.value)} required />
+              <Select aria-label="Expense category" value={tagId} onChange={(event) => setTagId(event.target.value)}>
+                {expenseTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+              </Select>
+            </div>
+              {formMessage ? <p className="text-sm font-medium text-zinc-600" role="status">{formMessage}</p> : null}
+              <Button className="w-full sm:w-auto" type="submit" disabled={isSaving}><CirclePlus className="h-4 w-4" />Add expense</Button>
+            </form>
+          </div>
+        </Card>
+        ) : null}
+
+        {expenseAction === 'setup_bill' ? (
+          <Card className="relative animate-soft-scale overflow-hidden lg:col-span-2">
+          <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-amber-200/70 blur-3xl" />
+          <div className="relative">
+            <h2 className="text-lg font-semibold tracking-tight">Recurring expense</h2>
+            <p className="mt-1 text-sm text-zinc-500">Schedule a payment that repeats each month until you pause it or its end month is reached.</p>
+            <form className="mt-4 grid gap-3" onSubmit={submitMonthlyBill}>
+            <label className="text-sm font-semibold" htmlFor="bill-name">Expense name</label>
+            <Input id="bill-name" value={billName} onChange={(event) => setBillName(event.target.value)} placeholder="Electricity, internet, subscription" required />
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Input aria-label="Recurring bill amount" type="number" min="0.01" step="0.01" value={billAmount} onChange={(event) => setBillAmount(event.target.value)} placeholder="Expected amount" required />
+              <Select aria-label="Payment day of month" value={billDueDay} onChange={(event) => setBillDueDay(event.target.value)}>
+                {dueDateDays.map((day) => <option key={day} value={day}>Day {day} of each month</option>)}
+              </Select>
+              <Select aria-label="Bill category" value={billTagId} onChange={(event) => setBillTagId(event.target.value)}>
+                {expenseTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+              </Select>
+            </div>
+            <label className="text-sm font-semibold" htmlFor="bill-end-month">End month <span className="font-normal text-zinc-500">(optional)</span></label>
+            <Input id="bill-end-month" type="month" min={activeMonth} value={billEndMonth} onChange={(event) => setBillEndMonth(event.target.value)} />
+              {formMessage ? <p className="text-sm font-medium text-zinc-600" role="status">{formMessage}</p> : null}
+              <Button className="w-full sm:w-auto" type="submit" disabled={isSaving}><CirclePlus className="h-4 w-4" />Add recurring expense</Button>
+            </form>
+          </div>
+        </Card>
+        ) : null}
+      </div>
+
+      <Card>
+        <details>
+          <summary className="cursor-pointer text-lg font-semibold">Manage recurring expenses</summary>
+          <p className="mt-1 text-sm text-zinc-500">Active bills appear as due each month until you mark them paid.</p>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             {monthlyBills.length ? monthlyBills.map((bill) => {
               const tag = expenseTags.find((item) => item.id === bill.tagId)
@@ -183,8 +227,8 @@ export function ExpensesPage() {
                       </Select>
                       <Input type="month" value={editBillEndMonth} onChange={(event) => setEditBillEndMonth(event.target.value)} />
                       <div className="flex gap-2">
-                        <Button type="button" onClick={saveBillEdit}>Save</Button>
-                        <Button type="button" variant="ghost" onClick={() => setEditingBillId(null)}>Cancel</Button>
+                        <Button className="h-10 min-h-10 w-10 px-0" type="button" aria-label="Save bill" title="Save" onClick={saveBillEdit}><Check className="h-4 w-4" /></Button>
+                        <Button className="h-10 min-h-10 w-10 px-0" type="button" variant="ghost" aria-label="Cancel editing" title="Cancel" onClick={() => setEditingBillId(null)}><X className="h-4 w-4" /></Button>
                       </div>
                     </div>
                   ) : (
@@ -194,15 +238,15 @@ export function ExpensesPage() {
                           <p className="font-semibold">{bill.name}</p>
                           <p className="text-sm text-zinc-500">Due date: day {bill.dueDay}</p>
                         </div>
-                        <Badge className={tag?.color}>{bill.cutoff === 'first' ? '1st' : bill.cutoff === 'second' ? '2nd' : tag?.name}</Badge>
+                         <Badge className={tag?.color}>{bill.cutoff === 'first' ? '1st pay period' : bill.cutoff === 'second' ? '2nd pay period' : tag?.name}</Badge>
                       </div>
                       <p className="mt-4 text-xl font-semibold">{formatCurrency(bill.expectedAmount)}</p>
                       <p className="mt-2 text-sm text-zinc-500">{bill.endMonth ? `Until ${formatMonth(bill.endMonth)}` : 'No end date'}</p>
                        <div className="mt-3 rounded-2xl bg-red-50 p-3 text-sm font-medium text-red-700 ring-1 ring-red-100">{bill.isActive ? 'Included automatically' : 'Paused'}</div>
                        <div className="mt-3 flex flex-wrap gap-1">
-                         <Button className="min-w-0 flex-1 px-2" type="button" variant="ghost" onClick={() => startEditBill(bill)}>Edit</Button>
-                         <Button className="min-w-0 flex-1 px-2" type="button" variant="ghost" onClick={() => updateMonthlyBill(bill.id, { isActive: !bill.isActive })}>{bill.isActive ? 'Pause' : 'Resume'}</Button>
-                         <Button className="min-w-0 flex-1 px-2" type="button" variant="ghost" onClick={() => window.confirm(`Delete ${bill.name}? Existing recorded expenses will remain.`) && deleteMonthlyBill(bill.id)}>Delete</Button>
+                         <Button className="h-10 min-h-10 w-10 px-0" type="button" variant="ghost" aria-label={`Edit ${bill.name}`} title="Edit" onClick={() => startEditBill(bill)}><Pencil className="h-4 w-4" /></Button>
+                         <Button className="h-10 min-h-10 w-10 px-0" type="button" variant="ghost" aria-label={`${bill.isActive ? 'Pause' : 'Resume'} ${bill.name}`} title={bill.isActive ? 'Pause' : 'Resume'} onClick={() => updateMonthlyBill(bill.id, { isActive: !bill.isActive })}>{bill.isActive ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</Button>
+                         <Button className="h-10 min-h-10 w-10 px-0" type="button" variant="ghost" aria-label={`Delete ${bill.name}`} title="Delete" onClick={() => window.confirm(`Delete ${bill.name}? Existing recorded expenses will remain.`) && deleteMonthlyBill(bill.id)}><Trash2 className="h-4 w-4" /></Button>
                        </div>
                     </>
                   )}
@@ -211,119 +255,42 @@ export function ExpensesPage() {
             }) : (
               <div className="xl:col-span-4 md:col-span-2">
                 <EmptyState
-                  title="No monthly bills yet"
-                  description="Setup recurring bills like electricity, internet, support, amortization, rent, or subscriptions. They will be auto-added each month."
-                  action={<Button type="button" onClick={() => setExpenseAction('setup_bill')}>Setup monthly bill</Button>}
+                  title="No recurring expenses yet"
+                  description="Recurring expenses like electricity, internet, support, amortization, rent, or subscriptions. They will appear as due each month."
+                  action={<Button type="button" onClick={() => setExpenseAction('setup_bill')}>Add recurring expense</Button>}
                 />
               </div>
             )}
           </div>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-4 lg:grid-cols-2">
-        {expenseAction === 'one_off' ? (
-          <Card className="relative animate-soft-scale overflow-hidden lg:col-span-2">
-          <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-red-200/60 blur-3xl" />
-          <div className="relative">
-            <h2 className="text-lg font-semibold tracking-tight">Add expense</h2>
-            <p className="mt-1 text-sm text-zinc-500">For spending that is not part of your fixed monthly bills.</p>
-            <form className="mt-4 grid gap-3" onSubmit={submitExpense}>
-            <label className="text-sm font-semibold" htmlFor="expense-title">Description</label>
-            <Input id="expense-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Lunch, fuel, medicine" required />
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Input aria-label="Expense amount" type="number" min="0.01" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="Amount" required />
-              <Input aria-label="Expense date" type="date" min={`${activeMonth}-01`} max={`${activeMonth}-31`} value={activeExpenseDate} onChange={(event) => setDate(event.target.value)} required />
-              <Select aria-label="Expense category" value={tagId} onChange={(event) => setTagId(event.target.value)}>
-                {expenseTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-              </Select>
-            </div>
-              {formMessage ? <p className="text-sm font-medium text-zinc-600" role="status">{formMessage}</p> : null}
-              <Button className="w-full sm:w-auto" type="submit">Add expense</Button>
-            </form>
-          </div>
-        </Card>
-        ) : null}
-
-        {expenseAction === 'setup_bill' ? (
-          <Card className="relative animate-soft-scale overflow-hidden lg:col-span-2">
-          <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-amber-200/70 blur-3xl" />
-          <div className="relative">
-            <h2 className="text-lg font-semibold tracking-tight">Set up recurring bill</h2>
-            <p className="mt-1 text-sm text-zinc-500">Use this when you have a new recurring obligation.</p>
-            <form className="mt-4 grid gap-3" onSubmit={submitMonthlyBill}>
-            <label className="text-sm font-semibold" htmlFor="bill-name">Bill name</label>
-            <Input id="bill-name" value={billName} onChange={(event) => setBillName(event.target.value)} placeholder="Electricity, internet, subscription" required />
-            <div className="grid gap-3 sm:grid-cols-3">
-              <Input aria-label="Recurring bill amount" type="number" min="0.01" step="0.01" value={billAmount} onChange={(event) => setBillAmount(event.target.value)} placeholder="Expected amount" required />
-              <Select aria-label="Bill due day" value={billDueDay} onChange={(event) => setBillDueDay(event.target.value)}>
-                {dueDateDays.map((day) => <option key={day} value={day}>Due every day {day}</option>)}
-              </Select>
-              <Select aria-label="Bill category" value={billTagId} onChange={(event) => setBillTagId(event.target.value)}>
-                {expenseTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-              </Select>
-            </div>
-            <label className="text-sm font-semibold" htmlFor="bill-end-month">End month <span className="font-normal text-zinc-500">(optional)</span></label>
-            <Input id="bill-end-month" type="month" min={activeMonth} value={billEndMonth} onChange={(event) => setBillEndMonth(event.target.value)} />
-              {formMessage ? <p className="text-sm font-medium text-zinc-600" role="status">{formMessage}</p> : null}
-              <Button className="w-full sm:w-auto" type="submit">Add recurring bill</Button>
-            </form>
-          </div>
-        </Card>
-        ) : null}
-      </div>
-
-      {expenseAction !== 'record_bill' ? <Card>
-        <h2 className="text-lg font-semibold tracking-tight">Monthly bills</h2>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          {monthlyBills.length ? monthlyBills.map((bill) => {
-            const tag = expenseTags.find((item) => item.id === bill.tagId)
-            return (
-              <div key={bill.id} className="interactive-lift group rounded-3xl border border-zinc-100 bg-white/75 p-4 transition duration-300 hover:border-red-200 hover:bg-red-50/60 hover:shadow-xl hover:shadow-red-900/10">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-medium">{bill.name}</p>
-                    <p className="text-sm text-zinc-500">Due every {bill.dueDay}</p>
-                  </div>
-                  <Badge className={tag?.color}>{tag?.name}</Badge>
-                </div>
-                <p className="mt-4 text-xl font-semibold">{formatCurrency(bill.expectedAmount)}</p>
-                <p className="mt-2 text-sm text-zinc-500">{bill.endMonth ? `Until ${formatMonth(bill.endMonth)}` : 'No end date'}</p>
-              </div>
-            )
-          }) : (
-            <div className="xl:col-span-4 md:col-span-2">
-              <EmptyState
-                title="No monthly bills yet"
-                description="Add a recurring bill and choose the exact due date day. You can also set an end month for loans or amortization."
-              />
-            </div>
-          )}
-        </div>
-      </Card> : null}
+        </details>
+      </Card>
 
       <Card>
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="grid flex-1 gap-3 sm:grid-cols-2">
-            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search expenses" />
-            <Select value={filterTag} onChange={(event) => setFilterTag(event.target.value)}>
-              <option value="all">All tags</option>
-              {expenseTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-            </Select>
+          <div className="flex-1">
+            <h2 className="text-lg font-semibold tracking-tight">Monthly expenses</h2>
+            <p className="mt-1 text-sm text-zinc-500">Mark recurring bills paid when money leaves your account.</p>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search expenses" />
+              <Select value={filterTag} onChange={(event) => setFilterTag(event.target.value)}>
+                <option value="all">All tags</option>
+                {expenseTags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+              </Select>
+            </div>
           </div>
           <div className="grid grid-cols-3 rounded-2xl border border-zinc-200/80 bg-white/70 p-1 shadow-inner">
-            {(['list', 'grid', 'calendar'] as ViewMode[]).map((mode) => (
+            {viewModes.map(({ value, label, icon: Icon }) => (
               <button
-                key={mode}
+                key={value}
                 className={cn(
                   'min-h-11 rounded-xl px-3 py-2 text-sm font-medium capitalize text-zinc-600 transition-[background-color,color,box-shadow] duration-300 hover:text-zinc-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-300',
-                  viewMode === mode && 'bg-zinc-950 text-white shadow-lg shadow-zinc-950/15 hover:text-white',
+                  viewMode === value && 'bg-zinc-950 text-white shadow-lg shadow-zinc-950/15 hover:text-white',
                 )}
                 type="button"
-                aria-pressed={viewMode === mode}
-                onClick={() => setViewMode(mode)}
+                aria-pressed={viewMode === value}
+                onClick={() => setViewMode(value)}
               >
-                {mode}
+                <span className="flex items-center justify-center gap-2"><Icon className="h-4 w-4" /><span className="hidden sm:inline">{label}</span></span>
               </button>
             ))}
           </div>
@@ -339,38 +306,6 @@ export function ExpensesPage() {
         </div>
       </Card>
     </div>
-  )
-}
-
-function ActionChoice({
-  active,
-  description,
-  label,
-  meta,
-  onClick,
-}: {
-  active: boolean
-  description: string
-  label: string
-  meta: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      className={`interactive-lift group relative overflow-hidden rounded-3xl border p-4 text-left transition duration-300 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-zinc-300 ${
-        active
-          ? 'border-zinc-950 bg-zinc-950 text-white shadow-2xl shadow-zinc-950/20'
-          : 'border-zinc-100 bg-white/75 text-zinc-950 hover:border-zinc-300 hover:bg-white hover:shadow-xl hover:shadow-zinc-900/5'
-      }`}
-      type="button"
-      aria-pressed={active}
-      onClick={onClick}
-    >
-      <span className={`absolute right-4 top-4 h-2.5 w-2.5 rounded-full transition ${active ? 'bg-emerald-300 shadow-lg shadow-emerald-300/40' : 'bg-zinc-200 group-hover:bg-zinc-400'}`} />
-      <p className={`mb-3 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${active ? 'bg-white/10 text-zinc-200' : 'bg-zinc-100 text-zinc-500'}`}>{meta}</p>
-      <p className="font-semibold">{label}</p>
-      <p className={`mt-1 text-sm ${active ? 'text-zinc-300' : 'text-zinc-500'}`}>{description}</p>
-    </button>
   )
 }
 
@@ -398,6 +333,7 @@ function ExpenseList({ expenses, onDelete }: { expenses: ReturnType<typeof useFi
   const [editExpenseAmount, setEditExpenseAmount] = useState('')
   const [editExpenseDate, setEditExpenseDate] = useState('')
   const [editExpenseTagId, setEditExpenseTagId] = useState('')
+  const editingExpense = expenses.find((expense) => expense.id === editingExpenseId)
 
   const startEditExpense = (expense: (typeof expenses)[number]) => {
     setEditingExpenseId(expense.id)
@@ -407,62 +343,56 @@ function ExpenseList({ expenses, onDelete }: { expenses: ReturnType<typeof useFi
     setEditExpenseTagId(expense.tagId)
   }
 
-  const saveExpenseEdit = () => {
+  const saveExpenseEdit = async () => {
     if (!editingExpenseId || !editExpenseTitle.trim() || !Number(editExpenseAmount) || !editExpenseTagId) return
 
-    updateExpense(editingExpenseId, {
+    if (!await updateExpense(editingExpenseId, {
       title: editExpenseTitle,
       amount: Number(editExpenseAmount),
       date: editExpenseDate,
       tagId: editExpenseTagId,
-    })
+    })) return
     setEditingExpenseId(null)
   }
 
   return (
+    <>
     <div className="space-y-3">
       {expenses.length ? expenses.map((expense) => {
         const tag = tags.find((item) => item.id === expense.tagId)
         return (
           <div key={expense.id} className="interactive-lift animate-soft-scale flex flex-col gap-3 rounded-3xl border border-zinc-100 bg-white/75 p-4 transition duration-300 hover:bg-white hover:shadow-xl hover:shadow-zinc-900/5 sm:flex-row sm:items-center sm:justify-between">
-            {editingExpenseId === expense.id ? (
-                  <div className="grid w-full gap-3 xl:grid-cols-[minmax(10rem,1fr)_9rem_9rem_9rem_auto]">
-                <Input value={editExpenseTitle} onChange={(event) => setEditExpenseTitle(event.target.value)} />
-                <Input aria-label="Expense amount" type="number" min="0.01" step="0.01" value={editExpenseAmount} onChange={(event) => setEditExpenseAmount(event.target.value)} />
-                <Input aria-label="Expense date" type="date" value={editExpenseDate} onChange={(event) => setEditExpenseDate(event.target.value)} required />
-                <Select value={editExpenseTagId} onChange={(event) => setEditExpenseTagId(event.target.value)}>
-                  {tags.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </Select>
-                <div className="flex gap-2">
-                  <Button type="button" onClick={saveExpenseEdit}>Save</Button>
-                  <Button type="button" variant="ghost" onClick={() => setEditingExpenseId(null)}>Cancel</Button>
-                </div>
+            <div>
+              <p className="font-medium">{expense.title}</p>
+              <p className="text-sm text-zinc-500">{formatDate(expense.date)}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              {expense.isGenerated ? <Badge className="bg-amber-100 text-amber-800">{expense.date < formatLocalDate() ? 'Overdue' : 'Due'}</Badge> : <Badge className="bg-emerald-100 text-emerald-700">Paid</Badge>}
+              <Badge className={tag?.color}>{tag?.name}</Badge>
+              <p className="min-w-20 text-right text-sm font-semibold">{formatCurrency(expense.amount)}</p>
+              {expense.isGenerated ? <PaymentConfirmation record={expense} kind="expense" /> : <Button className="h-10 min-h-10 w-10 px-0" variant="ghost" aria-label={`Edit ${expense.title}`} title="Edit" onClick={() => startEditExpense(expense)}><Pencil className="h-4 w-4" /></Button>}
+              {expense.isGenerated ? null : <UndoPaymentConfirmation record={expense} kind="expense" />}
+              {expense.isGenerated ? null : <Button className="h-10 min-h-10 w-10 px-0" variant="ghost" aria-label={`Delete ${expense.title}`} title="Delete" onClick={() => onDelete(expense.id)}><Trash2 className="h-4 w-4" /></Button>}
               </div>
-            ) : (
-              <>
-                <div>
-                  <p className="font-medium">{expense.title}</p>
-                  <p className="text-sm text-zinc-500">{formatDate(expense.date)}</p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                  {expense.billId ? <Badge className="bg-zinc-100 text-zinc-700">Bill</Badge> : null}
-                  {expense.isGenerated ? <Badge className="bg-zinc-100 text-zinc-700">Auto</Badge> : null}
-                  <Badge className={tag?.color}>{tag?.name}</Badge>
-                  <p className="min-w-20 text-right text-sm font-semibold">{formatCurrency(expense.amount)}</p>
-                  {expense.isGenerated ? null : <Button variant="ghost" onClick={() => startEditExpense(expense)}>Edit</Button>}
-                  {expense.isGenerated ? null : <Button variant="ghost" onClick={() => onDelete(expense.id)}>Delete</Button>}
-                </div>
-              </>
-            )}
           </div>
         )
       }) : (
         <EmptyState
           title="No expenses this month"
-          description="Monthly bills will appear automatically after setup. One-off spending can be added manually."
+          description="Monthly bills will appear automatically after setup. One-time spending can be added manually."
         />
       )}
     </div>
+    <EditDrawer open={Boolean(editingExpense)} title="Edit expense" description="Update this transaction without crowding the monthly list." onClose={() => setEditingExpenseId(null)}>
+      {editingExpense ? <div className="grid gap-4">
+        <label className="grid gap-2 text-sm font-semibold">Description<Input value={editExpenseTitle} onChange={(event) => setEditExpenseTitle(event.target.value)} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Amount<Input type="number" min="0.01" step="0.01" value={editExpenseAmount} onChange={(event) => setEditExpenseAmount(event.target.value)} /></label>
+        <label className="grid gap-2 text-sm font-semibold">Date paid<Input type="date" value={editExpenseDate} onChange={(event) => setEditExpenseDate(event.target.value)} required /></label>
+        <label className="grid gap-2 text-sm font-semibold">Category<Select value={editExpenseTagId} onChange={(event) => setEditExpenseTagId(event.target.value)}>{tags.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</Select></label>
+        <Button type="button" onClick={saveExpenseEdit}><Check className="h-4 w-4" />Save changes</Button>
+      </div> : null}
+    </EditDrawer>
+    </>
   )
 }
 
@@ -485,20 +415,20 @@ function ExpenseGrid({ expenses, onDelete }: { expenses: ReturnType<typeof useFi
                 <p className="text-sm text-zinc-500">{formatDate(expense.date)}</p>
               </div>
               <div className="flex flex-col items-end gap-2">
-                {expense.billId ? <Badge className="bg-zinc-100 text-zinc-700">Bill</Badge> : null}
-                {expense.isGenerated ? <Badge className="bg-zinc-100 text-zinc-700">Auto</Badge> : null}
+                {expense.isGenerated ? <Badge className="bg-amber-100 text-amber-800">{expense.date < formatLocalDate() ? 'Overdue' : 'Due'}</Badge> : <Badge className="bg-emerald-100 text-emerald-700">Paid</Badge>}
                 <Badge className={tag?.color}>{tag?.name}</Badge>
               </div>
             </div>
             <p className="mt-4 text-xl font-semibold">{formatCurrency(expense.amount)}</p>
-            {expense.isGenerated ? null : <Button className="mt-3" variant="ghost" onClick={() => onDelete(expense.id)}>Delete</Button>}
+            {!expense.isGenerated ? <UndoPaymentConfirmation record={expense} kind="expense" /> : null}
+            {expense.isGenerated ? <PaymentConfirmation record={expense} kind="expense" /> : <Button className="mt-3 h-10 min-h-10 w-10 px-0" variant="ghost" aria-label={`Delete ${expense.title}`} title="Delete" onClick={() => onDelete(expense.id)}><Trash2 className="h-4 w-4" /></Button>}
           </div>
         )
       }) : (
         <div className="lg:col-span-3 sm:col-span-2">
           <EmptyState
             title="No expenses to show"
-            description="Add a one-off expense or setup monthly bills to populate this view."
+            description="Add a one-time expense or setup monthly bills to populate this view."
           />
         </div>
       )}

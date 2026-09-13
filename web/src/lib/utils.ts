@@ -9,7 +9,8 @@ export const formatCurrency = (amount: number) =>
   new Intl.NumberFormat('en-PH', {
     style: 'currency',
     currency: 'PHP',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(amount)
 
 export const formatDate = (date: string) =>

@@ -11,7 +11,7 @@ type CashflowBarChartProps = {
 
 export function CashflowBarChart({ items }: CashflowBarChartProps) {
   return (
-    <div className="h-60 sm:h-72" role="img" aria-label="Income and expenses by cutoff">
+    <div className="h-60 sm:h-72" role="img" aria-label="Income and expenses by payday">
       <ResponsiveContainer height="100%" width="100%">
         <BarChart data={items} margin={{ left: -14, right: 8, top: 8 }}>
           <CartesianGrid stroke="#e4e4e7" strokeDasharray="4 4" vertical={false} />
