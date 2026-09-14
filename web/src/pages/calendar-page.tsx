@@ -1,12 +1,55 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { PaymentConfirmation, UndoPaymentConfirmation } from '../components/payment-confirmation'
+import { Badge } from '../components/ui/badge'
+import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { EmptyState } from '../components/empty-state'
 import { Button } from '../components/ui/button'
 import { Card } from '../components/ui/card'
 import { getExpensesForMonth, getIncomeEntriesForMonth } from '../lib/recurring'
-import { formatCurrency, moveMonth } from '../lib/utils'
+import { cn, formatCurrency, formatDate, formatLocalDate, moveMonth } from '../lib/utils'
 import { useFinanceStore } from '../store/finance-store'
 
 export function CalendarPage() {
+  const today = formatLocalDate()
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  const popover = useRef<HTMLDivElement>(null)
+  const anchor = useRef<HTMLButtonElement | null>(null)
+  const [placement, setPlacement] = useState({ left: 0, top: 0, width: 360, maxHeight: 360, above: false })
+  const selectDay = (date: string, button: HTMLButtonElement) => {
+    if (date === selectedDate) { setSelectedDate(null); return }
+    anchor.current = button
+    const rect = button.getBoundingClientRect()
+    const width = Math.min(360, window.innerWidth - 24)
+    const below = window.innerHeight - rect.bottom - 20
+    const above = below < 300 && rect.top > below
+    setPlacement({ left: Math.max(12, Math.min(rect.left, window.innerWidth - width - 12)), top: above ? rect.top - 8 : rect.bottom + 8, width, maxHeight: Math.max(120, Math.min(400, above ? rect.top - 20 : below)), above })
+    setSelectedDate(date)
+    requestAnimationFrame(() => popover.current?.focus({ preventScroll: true }))
+  }
+  useEffect(() => {
+    if (!selectedDate) return
+    const dismiss = (event: Event) => {
+      const target = event.target as Element | null
+      if (target && (popover.current?.contains(target) || anchor.current?.contains(target) || target.closest?.('[aria-modal="true"]'))) return
+      setSelectedDate(null)
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || document.querySelector('[aria-modal="true"]')) return
+      setSelectedDate(null)
+      anchor.current?.focus({ preventScroll: true })
+    }
+    document.addEventListener('pointerdown', dismiss)
+    window.addEventListener('scroll', dismiss, true)
+    window.addEventListener('resize', dismiss)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('scroll', dismiss, true)
+      window.removeEventListener('resize', dismiss)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [selectedDate])
   const skippedKeys = useFinanceStore(state => state.skippedOccurrenceKeys)
   const { incomeEntries, incomeSources, expenses, monthlyBills, selectedMonth: visibleMonth, setSelectedMonth } = useFinanceStore()
   const monthDate = new Date(`${visibleMonth}-01T00:00:00`)
@@ -24,6 +67,10 @@ export function CalendarPage() {
   const monthExpenses = visibleExpenses.filter((expense) => !expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
   const dueExpenses = visibleExpenses.filter((expense) => expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
 
+  const selectedIncome = visibleIncomeEntries.filter(entry => entry.date === selectedDate)
+  const selectedExpenses = visibleExpenses.filter(entry => entry.date === selectedDate)
+  const overdue = visibleExpenses.filter(entry => entry.isGenerated && entry.date < today)
+
   return (
     <div key={visibleMonth} className="month-change page-shell space-y-4 sm:space-y-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -32,6 +79,7 @@ export function CalendarPage() {
           <p className="mt-1 text-sm text-zinc-500">Navigate months and see income, recorded expenses, and planned monthly bills.</p>
         </div>
         <div className="flex w-full items-center justify-between gap-2 sm:w-auto sm:justify-start">
+<Button variant="secondary" onClick={() => { setSelectedMonth(today.slice(0, 7)); setSelectedDate(null) }}>Today</Button>
           <Button variant="secondary" aria-label="Previous month" onClick={() => setSelectedMonth(moveMonth(visibleMonth, -1))}>
             <ChevronLeft className="h-4 w-4" />
           </Button>
@@ -64,6 +112,7 @@ export function CalendarPage() {
       </div>
 
       <Card>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-zinc-500">Select a day to review payments and update their status.</p>{overdue.length ? <Badge className="bg-red-100 text-red-700">{overdue.length} overdue · {formatCurrency(overdue.reduce((sum, item) => sum + item.amount, 0))}</Badge> : null}</div>
         {!visibleIncomeEntries.length && !visibleExpenses.length ? (
           <div className="mb-4">
             <EmptyState
@@ -85,29 +134,33 @@ export function CalendarPage() {
             const weekday = new Intl.DateTimeFormat('en', { weekday: 'short' }).format(new Date(`${date}T00:00:00`))
             const dayIncome = visibleIncomeEntries.filter((entry) => entry.date === date)
             const dayExpenses = visibleExpenses.filter((expense) => expense.date === date)
-            const incomeTotal = dayIncome.filter((entry) => !entry.isGenerated).reduce((sum, entry) => sum + entry.amount, 0)
-            const expectedIncomeTotal = dayIncome.filter((entry) => entry.isGenerated).reduce((sum, entry) => sum + entry.amount, 0)
-            const expenseTotal = dayExpenses.filter((expense) => !expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
-            const dueExpenseTotal = dayExpenses.filter((expense) => expense.isGenerated).reduce((sum, expense) => sum + expense.amount, 0)
-            const plannedCount = dayIncome.filter((entry) => entry.isGenerated).length + dayExpenses.filter((expense) => expense.isGenerated).length
+            const items = [...dayIncome.map(entry => ({ ...entry, kind: 'income' })), ...dayExpenses.map(entry => ({ ...entry, kind: 'expense' }))]
+            const overdueCount = dayExpenses.filter(entry => entry.isGenerated && date < today).length
 
             return (
-              <div key={day} className="interactive-lift min-h-32 rounded-3xl border border-zinc-100 bg-white/70 p-3 transition hover:bg-white hover:shadow-lg hover:shadow-zinc-900/5" aria-label={`${weekday}, ${visibleMonthLabel} ${day}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <p className="flex items-center gap-2 text-sm font-semibold"><span className="flex h-8 w-8 items-center justify-center rounded-2xl bg-zinc-950 text-white">{day}</span><span className="text-zinc-500 lg:hidden">{weekday}</span></p>
-                  {plannedCount ? <span className="rounded-full bg-amber-100 px-2 py-1 text-[0.65rem] font-semibold text-amber-800">{plannedCount} expected</span> : null}
-                </div>
-                <div className="mt-3 space-y-1 text-xs">
-                  {incomeTotal ? <p className="font-semibold text-emerald-600">+{formatCurrency(incomeTotal)}</p> : null}
-                  {expenseTotal ? <p className="font-semibold text-red-600">-{formatCurrency(expenseTotal)}</p> : null}
-                  {expectedIncomeTotal ? <p className="truncate rounded-full bg-amber-50 px-2 py-1 font-medium text-amber-800">Expected +{formatCurrency(expectedIncomeTotal)}</p> : null}
-                  {dueExpenseTotal ? <p className="truncate rounded-full bg-amber-50 px-2 py-1 font-medium text-amber-800">Due -{formatCurrency(dueExpenseTotal)}</p> : null}
-                </div>
-              </div>
+              <button type="button" key={day} onClick={event => selectDay(date, event.currentTarget)} aria-haspopup="dialog" aria-expanded={selectedDate === date} aria-controls={selectedDate === date ? "calendar-day-details" : undefined} className={cn('min-h-32 min-w-0 rounded-2xl border bg-white/70 p-3 text-left transition hover:bg-white hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600', selectedDate === date ? 'border-emerald-500 ring-2 ring-emerald-100' : 'border-zinc-100', date === today && 'bg-emerald-50/60')} aria-label={weekday + ', ' + formatDate(date) + ', ' + items.length + ' payments'} aria-pressed={selectedDate === date} aria-current={date === today ? 'date' : undefined}>
+                <span className="flex items-center justify-between gap-2"><span className={cn('flex h-8 w-8 items-center justify-center rounded-full text-sm font-semibold', date === today ? 'bg-emerald-600 text-white' : 'text-zinc-700')}>{day}</span><span className="text-xs text-zinc-500">{date === today ? 'Today' : weekday}</span></span>
+                <span className="mt-2 block space-y-1">
+                  {items.slice(0, 2).map(item => <span key={item.kind + item.id} className={cn('block rounded-lg px-2 py-1 text-xs', item.kind === 'income' ? 'bg-emerald-50 text-emerald-800' : item.isGenerated && date < today ? 'bg-red-50 text-red-700' : item.isGenerated ? 'bg-amber-50 text-amber-800' : 'bg-zinc-100 text-zinc-700')}><span className="block truncate font-medium">{item.title}</span><span className="block truncate">{item.kind === 'income' ? '+' : '−'}{formatCurrency(item.amount)} · {item.isGenerated ? item.kind === 'income' ? 'Expected' : date < today ? 'Overdue' : 'Due' : item.kind === 'income' ? 'Received' : 'Paid'}</span></span>)}
+                  {items.length > 2 ? <span className="block text-xs font-medium text-zinc-500">+{items.length - 2} more</span> : null}
+                  {overdueCount ? <span className="block text-xs font-medium text-red-700">{overdueCount} overdue</span> : null}
+                </span>
+              </button>
             )
           })}
         </div>
       </Card>
+      {selectedDate?.startsWith(visibleMonth) ? createPortal(
+        <div ref={popover} id="calendar-day-details" role="dialog" aria-labelledby="calendar-day-title" tabIndex={-1} style={{ left: placement.left, top: placement.top, width: placement.width, maxHeight: placement.maxHeight, transform: placement.above ? 'translateY(-100%)' : undefined }} className="quiet-scrollbar fixed z-50 overflow-y-auto rounded-2xl border border-zinc-200 bg-white p-4 shadow-xl shadow-zinc-950/15 outline-none">
+          <div className="flex items-center justify-between gap-3"><h2 id="calendar-day-title" className="font-semibold">{formatDate(selectedDate)}</h2><Button type="button" variant="ghost" className="h-8 min-h-8 w-8 px-0" aria-label="Close day details" onClick={() => { setSelectedDate(null); anchor.current?.focus({ preventScroll: true }) }}><X className="h-4 w-4" /></Button></div>
+          <p className="mt-1 text-sm text-zinc-500">{selectedIncome.length + selectedExpenses.length} {selectedIncome.length + selectedExpenses.length === 1 ? 'payment' : 'payments'} · Received {formatCurrency(selectedIncome.filter(item => !item.isGenerated).reduce((sum, item) => sum + item.amount, 0))} · Paid {formatCurrency(selectedExpenses.filter(item => !item.isGenerated).reduce((sum, item) => sum + item.amount, 0))}</p>
+          <div className="mt-4 divide-y divide-zinc-100">
+            {selectedIncome.map(entry => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="font-medium">{entry.title}</p><p className="text-sm text-emerald-700">+{formatCurrency(entry.amount)} · {entry.isGenerated ? 'Expected income' : 'Received'}</p></div>{entry.isGenerated ? <PaymentConfirmation record={entry} kind="income" /> : <UndoPaymentConfirmation record={entry} kind="income" />}</div>)}
+            {selectedExpenses.map(entry => <div key={entry.id} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><p className="font-medium">{entry.title}</p><p className={cn('text-sm', entry.isGenerated && entry.date < today ? 'text-red-700' : 'text-zinc-600')}>−{formatCurrency(entry.amount)} · {entry.isGenerated ? entry.date < today ? 'Overdue' : 'Due' : 'Paid'}</p></div>{entry.isGenerated ? <PaymentConfirmation record={entry} kind="expense" /> : <UndoPaymentConfirmation record={entry} kind="expense" />}</div>)}
+          </div>
+          {!selectedIncome.length && !selectedExpenses.length ? <p className="py-6 text-sm text-zinc-500">No payments scheduled or recorded for this day.</p> : null}
+        </div>
+      , document.body) : null}
     </div>
   )
 }

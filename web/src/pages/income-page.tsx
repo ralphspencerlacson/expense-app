@@ -1,3 +1,4 @@
+import { AddModal } from '../components/add-modal'
 import { PaydayEditor } from '../components/payday-editor'
 import { newPayday, validPaydays, type PaydayDraft } from '../lib/payday-drafts'
 import { PaymentConfirmation, UndoPaymentConfirmation } from '../components/payment-confirmation'
@@ -13,7 +14,7 @@ import { Select } from '../components/ui/select'
 import { formatPaydayLabel, getIncomeEntriesForMonth } from '../lib/recurring'
 import { defaultDateForMonth, formatCurrency, formatDate, formatMonthLabel } from '../lib/utils'
 import { useFinanceStore } from '../store/finance-store'
-import type { IncomeEntry, IncomePaymentSchedule, IncomeSchedule, IncomeSource, IncomeSourceType } from '../types/finance'
+import type { IncomeEntry, IncomeSchedule, IncomeSource, IncomeSourceType } from '../types/finance'
 
 export function IncomePage() {
   const skippedKeys = useFinanceStore(state => state.skippedOccurrenceKeys)
@@ -38,6 +39,7 @@ export function IncomePage() {
   const [manualSourceId, setManualSourceId] = useState<string | undefined>()
   const [account, setAccount] = useState('')
   const [note, setNote] = useState('')
+  const [showAddForm, setShowAddForm] = useState(false)
   const [formMessage, setFormMessage] = useState('')
   const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null)
   const [editIncomeTitle, setEditIncomeTitle] = useState('')
@@ -66,6 +68,7 @@ export function IncomePage() {
     setSourceName('')
     setPaydays([newPayday(1)])
     setFormMessage('Income source added.')
+    setShowAddForm(false)
   }
 
   const submitOneTime = async (event: FormEvent<HTMLFormElement>) => {
@@ -82,6 +85,7 @@ export function IncomePage() {
     setOneTimeCategory('other')
     setManualSourceId(undefined)
     setFormMessage('Income added.')
+    setShowAddForm(false)
   }
 
   const startEditIncome = (entry: (typeof monthIncomeEntries)[number]) => {
@@ -122,6 +126,7 @@ export function IncomePage() {
   }
 
   const recordManualIncome = (source: IncomeSource) => {
+    setShowAddForm(true)
     setManualSourceId(source.id)
     setOneTimeTitle(source.name)
     setOneTimeCategory(source.type)
@@ -153,13 +158,23 @@ export function IncomePage() {
         </div>
       </div>
 
-      <Card className="relative animate-soft-scale overflow-hidden">
-        <div className="absolute -right-10 -top-10 h-32 w-32 rounded-full bg-emerald-200/60 blur-3xl" />
-        <form className="relative grid gap-4" onSubmit={submitIncome}>
+      {!showAddForm && formMessage ? <p role="status" className="text-sm text-zinc-600">{formMessage}</p> : null}
+      <AddModal open={showAddForm} onClose={() => setShowAddForm(false)} title="Add income" busy={isSaving}>
+      <div className="space-y-4">
+        
+        <p className="mt-1 text-sm text-zinc-500">Record a payment or set up income that repeats each month.</p>
+        <label className="mt-4 grid gap-2 text-sm font-semibold">Income type
+          <Select value={schedule} onChange={(event) => { setSchedule(event.target.value as IncomeSchedule); setManualSourceId(undefined); setFormMessage('') }}>
+            <option value="irregular">One-time income</option>
+            <option value="cutoff">Recurring income</option>
+          </Select>
+        </label>
+      </div>
+
+      <div className="space-y-4">
+        <form className="relative mt-4 grid gap-3" onSubmit={submitIncome}>
           {schedule === 'irregular' ? <div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2 text-sm font-semibold">Account (optional)<Input value={account} onChange={event => setAccount(event.target.value)} placeholder="Cash, bank, or card" /></label><label className="grid gap-2 text-sm font-semibold">Notes (optional)<Input value={note} onChange={event => setNote(event.target.value)} /></label></div> : null}
-          <div><h2 className="font-semibold">Income details</h2><p className="mt-1 text-sm text-zinc-500">Use one-time income or set up one or more payments that repeat each month.</p></div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-2 text-sm font-semibold">Income type<Select value={schedule} onChange={(event) => { setSchedule(event.target.value as IncomeSchedule); setManualSourceId(undefined); setFormMessage('') }}><option value="irregular">One-time income</option><option value="cutoff">Recurring income</option></Select></label>
+          <div className="grid gap-3">
             <label className="grid gap-2 text-sm font-semibold">Category<Select value={schedule === 'irregular' ? oneTimeCategory : sourceType} onChange={(event) => schedule === 'irregular' ? setOneTimeCategory(event.target.value as IncomeSourceType) : setSourceType(event.target.value as IncomeSourceType)}><option value="salary">Salary</option><option value="allowance">Allowance</option><option value="business">Business</option><option value="freelance">Freelance</option><option value="bonus">Bonus</option><option value="other">Other</option></Select></label>
           </div>
           <label className="grid gap-2 text-sm font-semibold">{schedule === 'irregular' ? 'Description' : 'Source name'}<Input value={schedule === 'irregular' ? oneTimeTitle : sourceName} onChange={(event) => schedule === 'irregular' ? setOneTimeTitle(event.target.value) : setSourceName(event.target.value)} placeholder={schedule === 'irregular' ? 'Project payment, sale, bonus' : 'Salary, allowance, retainer'} required /></label>
@@ -168,10 +183,12 @@ export function IncomePage() {
           {formMessage ? <p className="text-sm font-medium text-zinc-600" role="status">{formMessage}</p> : null}
           <Button className="w-full" type="submit" disabled={isSaving}><CirclePlus className="h-4 w-4" />{schedule === 'irregular' ? 'Record income' : 'Create income schedule'}</Button>
         </form>
-      </Card>
+      </div>
+
+      </AddModal>
 
       <Card>
-        <h2 className="font-semibold">Monthly income</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold">Monthly income</h2><Button type="button" onClick={() => { setFormMessage(''); setShowAddForm(true) }}><CirclePlus className="h-4 w-4" />Add income</Button></div>
         <p className="mt-1 text-sm text-zinc-500">Each payment appears once. Confirm it when the money arrives.</p>
         <div className="mt-4 space-y-4">
           {incomeSources.map(source => {
@@ -187,7 +204,6 @@ export function IncomePage() {
                 </div>
               <div className="divide-y divide-zinc-100">{entries.map(entry => <IncomePaymentRow key={entry.occurrenceKey ?? entry.id} entry={entry} source={source} isSaving={isSaving} onEdit={startEditIncome} onDelete={deleteIncomeEntry} />)}</div>
               {!entries.length ? <p className="px-4 py-3 text-sm text-zinc-500">No payments for this month.</p> : null}
-              {source.payments.length ? <div className="p-3"><IncomeDeductionDetails source={source} /></div> : null}
               {source.mode === 'manual' ? <div className="p-3"><Button variant="secondary" onClick={() => recordManualIncome(source)}>Record income</Button></div> : null}
             </section>
           })}
@@ -195,7 +211,7 @@ export function IncomePage() {
             <h3 className="border-b border-zinc-100 p-4 font-semibold">Other income</h3>
             <div className="divide-y divide-zinc-100">{ungroupedEntries.map(entry => <IncomePaymentRow key={entry.id} entry={entry} isSaving={isSaving} onEdit={startEditIncome} onDelete={deleteIncomeEntry} />)}</div>
           </section> : null}
-          {!incomeSources.length && !ungroupedEntries.length ? <EmptyState title="No income yet" description="Record income or create a recurring schedule using the form above." /> : null}
+          {!incomeSources.length && !ungroupedEntries.length ? <EmptyState title="No income yet" description="Use Add income to record a payment or create a recurring schedule." /> : null}
         </div>
       </Card>
       <EditDrawer open={Boolean(editingSource)} title="Edit income source" description="Update the source and each payment on its own row." onClose={() => setEditingSourceId(null)}>
@@ -267,39 +283,3 @@ function getSourceDescription(source: IncomeSource) {
   return 'irregular/manual'
 }
 
-function IncomeDeductionDetails({ source }: { source: IncomeSource }) {
-  return (
-    <details className="rounded-2xl border border-zinc-100 bg-white/60 px-3 py-2.5">
-      <summary className="cursor-pointer text-sm font-medium text-zinc-600">Schedule and deductions</summary>
-      <div className="mt-3 space-y-3">
-        {source.payments.map(payment => <PaydayDeductionDetails key={payment.id} payment={payment} monthly={source.schedule === 'monthly'} />)}
-      </div>
-    </details>
-  )
-}
-
-function PaydayDeductionDetails({ payment, monthly }: { payment: IncomePaymentSchedule; monthly: boolean }) {
-  const gross = payment.grossAmount ?? payment.amount
-  const deductions = payment.deductions ?? []
-  const totalDeductions = deductions.reduce((sum, deduction) => sum + deduction.amount, 0)
-  const label = monthly ? 'Monthly payment' : formatPaydayLabel(payment.position)
-
-  return (
-    <div className="rounded-xl bg-zinc-50 p-3">
-      <p className="text-sm font-semibold">{label} · day {payment.paymentDay}</p>
-      <dl className="mt-2 grid grid-cols-2 gap-3 text-sm">
-        <div><dt className="text-xs text-zinc-500">Gross</dt><dd className="mt-1 font-medium">{formatCurrency(gross)}</dd></div>
-        <div><dt className="text-xs text-zinc-500">Deductions</dt><dd className="mt-1 font-medium">{totalDeductions ? formatCurrency(totalDeductions) + ' · ' + formatPercent(totalDeductions, gross) : 'None'}</dd></div>
-      </dl>
-      {deductions.length ? <ul className="mt-2 space-y-1 text-xs text-zinc-500">{deductions.map(deduction => <li key={deduction.id}>{deduction.label} · {formatCurrency(deduction.amount)}</li>)}</ul> : null}
-    </div>
-  )
-}
-
-function formatPercent(amount: number, base: number) {
-  if (!base) {
-    return '0%'
-  }
-
-  return `${((amount / base) * 100).toFixed(2)}%`
-}

@@ -191,6 +191,24 @@ test('administrator user deletion still cascades with schedule-history triggers'
 
 const reportCode = ts.transpileModule(await readFile(new URL('../src/lib/reporting.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023 } }).outputText
 const reporting = await import('data:text/javascript;base64,' + Buffer.from(reportCode).toString('base64'))
+test('yearly comparisons include all months, exclude pending payments and isolate the selected year', () => {
+  const entries = [
+    { amount: 900, date: '2026-09-30' },
+    { amount: 2000, date: '2026-09-30', isGenerated: true },
+    { amount: 700, date: '2025-09-30' },
+  ]
+  const expenses = [{ amount: 300, date: '2026-10-01' }, { amount: 600, date: '2026-10-02', isGenerated: true }]
+  const year = reporting.getYearlyCashflow(entries, expenses, '2026')
+  assert.equal(year.length, 12)
+  assert.equal(year[0].month, '2026-01')
+  assert.equal(year[11].month, '2026-12')
+  assert.equal(year[0].income, 0)
+  assert.equal(year[8].income, 900)
+  assert.equal(year[8].savings, 900)
+  assert.equal(year[9].expenses, 300)
+  assert.equal(year[9].savings, -300)
+  assert.ok(reporting.getYearlyCashflow(entries, expenses, '2027').every(row => row.income === 0 && row.expenses === 0))
+})
 test('monthly reporting uses actual payment dates and recomputes after edits', () => {
   const entries = [{ id: 'actual', title: 'Salary', kind: 'source', amount: 1000, date: '2026-09-15' }, { id: 'expected', title: 'Salary', kind: 'source', amount: 5000, date: '2026-09-30', isGenerated: true }]
   const expenses = [{ id: 'paid', title: 'Rent', amount: 400, date: '2026-09-16', tagId: 'tag-bills' }]

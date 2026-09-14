@@ -352,3 +352,26 @@ select,
 textarea {
   font: inherit;
 }
+
+@keyframes modal-bubble-in {
+  0% { opacity: 0; transform: translateY(16px) scale(.88); }
+  70% { opacity: 1; transform: translateY(-2px) scale(1.015); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes modal-bubble-out {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(10px) scale(.92); }
+}
+@keyframes modal-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modal-backdrop-out { from { opacity: 1; } to { opacity: 0; } }
+.add-modal[open] { animation: modal-bubble-in 300ms cubic-bezier(.2,.8,.2,1) both; }
+.add-modal::backdrop { background: rgb(9 9 11 / .45); backdrop-filter: blur(4px); animation: modal-backdrop-in 220ms ease both; }
+.add-modal[data-closing="true"] { animation: modal-bubble-out 180ms ease-in both; pointer-events: none; }
+.add-modal[data-closing="true"]::backdrop { animation: modal-backdrop-out 180ms ease-in both; }
+@media (prefers-reduced-motion: reduce) {
+  .add-modal[open], .add-modal::backdrop { animation: none; }
+}
+
+.add-modal[open] { display: flex; flex-direction: column; }
+.quiet-scrollbar { scrollbar-width: none; }
+.quiet-scrollbar::-webkit-scrollbar { display: none; }

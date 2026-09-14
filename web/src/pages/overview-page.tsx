@@ -1,4 +1,4 @@
-import { getMonthlyCashflow } from '../lib/reporting'
+import { getYearlyCashflow } from '../lib/reporting'
 import { ArrowDownRight, ArrowUpRight, CalendarClock, CirclePlus, ReceiptText, Sparkles, Wallet } from 'lucide-react'
 import { Link } from 'react-router'
 import { CashflowBarChart } from '../components/charts/cashflow-bar-chart'
@@ -14,8 +14,10 @@ import { useFinanceStore } from '../store/finance-store'
 export function OverviewPage() {
   const skippedKeys = useFinanceStore(state => state.skippedOccurrenceKeys)
   const { incomeEntries, incomeSources, expenses, expenseTags, monthlyBills } = useFinanceStore()
-  const savingsSnapshots = getMonthlyCashflow(incomeEntries, expenses)
   const activeMonth = useFinanceStore((state) => state.selectedMonth)
+  const activeYear = activeMonth.slice(0, 4)
+  const savingsSnapshots = getYearlyCashflow(incomeEntries, expenses, activeYear)
+  const hasYearTransactions = [...incomeEntries, ...expenses].some(entry => !entry.isGenerated && entry.date.startsWith(`${activeYear}-`))
   const monthIncomeEntries = getIncomeEntriesForMonth(incomeSources, incomeEntries, activeMonth, skippedKeys)
   const monthExpenses = getExpensesForMonth(monthlyBills, expenses, activeMonth, skippedKeys)
   const receivedIncomeEntries = monthIncomeEntries.filter((entry) => !entry.isGenerated)
@@ -32,10 +34,6 @@ export function OverviewPage() {
   const recentIncome = [...receivedIncomeEntries].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
   const recentExpenses = [...paidExpenses].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 4)
   const upcomingIncome = [...expectedIncomeEntries].sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3)
-  const firstCutoffIncome = receivedIncomeEntries.filter((entry) => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
-  const secondCutoffIncome = monthIncomeEntries.filter((entry) => entry.cutoff === 'second').reduce((sum, entry) => sum + entry.amount, 0)
-  const firstCutoffExpenses = paidExpenses.filter((expense) => expense.cutoff === 'first').reduce((sum, expense) => sum + expense.amount, 0)
-  const secondCutoffExpenses = monthExpenses.filter((expense) => expense.cutoff === 'second').reduce((sum, expense) => sum + expense.amount, 0)
   const plannedFirstIncome = monthIncomeEntries.filter(entry => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
   const plannedSecondIncome = monthIncomeEntries.filter(entry => entry.cutoff === 'second').reduce((sum, entry) => sum + entry.amount, 0)
   const plannedFirstExpenses = monthExpenses.filter(entry => entry.cutoff === 'first').reduce((sum, entry) => sum + entry.amount, 0)
@@ -107,20 +105,20 @@ export function OverviewPage() {
         <SummaryCard icon={CalendarClock} label="Top expense tag" value={topTag?.tag.name ?? 'None'} detail={topTag ? formatCurrency(topTag.total) : undefined} tone="sky" />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
+      <div className="grid gap-4">
         <Card>
           <div className="mb-6 flex items-start justify-between gap-4">
             <div>
-              <h2 className="font-semibold">Monthly net cashflow</h2>
+              <h2 className="font-semibold">Net cashflow · {activeYear}</h2>
               <p className="mt-1 text-sm text-zinc-500">Income received minus expenses paid, calculated from your records.</p>
             </div>
-            <Badge className="bg-emerald-100 text-emerald-700">Latest {formatCurrency(currentMonthSavings)}</Badge>
+            <Badge className="bg-emerald-100 text-emerald-700">{formatMonthLabel(activeMonth)}: {formatCurrency(currentMonthSavings)}</Badge>
           </div>
-          {savingsSnapshots.length ? (
+          {hasYearTransactions ? (
             <SavingsLineChart snapshots={savingsSnapshots} />
           ) : (
             <EmptyState
-              title="No transaction history yet"
+              title={`No transactions in ${activeYear} yet`}
               description="Record income or expenses to build your monthly cashflow history."
             />
           )}
@@ -128,15 +126,14 @@ export function OverviewPage() {
 
         <Card>
           <div className="mb-6">
-            <h2 className="font-semibold">Payment cashflow</h2>
-            <p className="mt-1 text-sm text-zinc-500">Compare confirmed income and spending across both pay periods.</p>
+            <h2 className="font-semibold">Yearly cashflow comparison · {activeYear}</h2>
+            <p className="mt-1 text-sm text-zinc-500">Compare income received and expenses paid from January to December. Scheduled payments are excluded.</p>
           </div>
-          <CashflowBarChart
-            items={[
-              { label: '1st payment', income: firstCutoffIncome, expenses: firstCutoffExpenses },
-              { label: '2nd payment', income: secondCutoffIncome, expenses: secondCutoffExpenses },
-            ]}
-          />
+          {hasYearTransactions ? <CashflowBarChart items={savingsSnapshots.map(row => ({
+            label: new Intl.DateTimeFormat('en', { month: 'short' }).format(new Date(`${row.month}-01T00:00:00`)),
+            income: row.income,
+            expenses: row.expenses,
+          }))} /> : <EmptyState title={`No transactions in ${activeYear} yet`} description="Record received income or paid expenses to compare monthly totals." />}
         </Card>
       </div>
 

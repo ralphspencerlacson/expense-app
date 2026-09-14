@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import type { Session } from '@supabase/supabase-js'
-import { LockKeyhole, WalletCards } from 'lucide-react'
+import { LockKeyhole } from 'lucide-react'
 import { supabase } from '../lib/supabase'
 import { useFinanceStore } from '../store/finance-store'
 import { Button } from './ui/button'
@@ -77,7 +77,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
         <div className="pointer-events-none absolute -right-24 top-0 h-80 w-80 rounded-full bg-emerald-400/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-32 -left-20 h-96 w-96 rounded-full bg-sky-400/15 blur-3xl" />
         <div className="animate-soft-scale relative w-full max-w-md rounded-[2rem] border border-white/10 bg-white/10 p-5 shadow-2xl backdrop-blur-2xl sm:p-8">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white text-zinc-950 shadow-xl"><WalletCards className="h-5 w-5" /></div>
+          <img src="/brand/ledger-logo.svg" alt="expenses-app" width="420" height="80" className="w-64 max-w-full rounded-2xl" />
           <p className="mt-8 text-sm font-semibold uppercase tracking-[0.2em] text-emerald-300">Private cashflow</p>
           <h1 className="page-title mt-3 font-semibold">Welcome back.</h1>
           <p className="mt-3 text-sm leading-6 text-zinc-300">Sign in to access income, bills, and expenses stored securely in your workspace.</p>
